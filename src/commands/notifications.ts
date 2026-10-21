@@ -19,22 +19,36 @@ export const notificationsCommand: Command = {
         await interaction.deferReply({ephemeral: true});
 
         if (subcommand === 'status') {
-            const userInstalled = interaction.authorizingIntegrationOwners?.[ApplicationIntegrationType.UserInstall] === interaction.user.id;
-            await interaction.editReply(userInstalled
-                ? 'The FVN.li app is user-installed for your account. Run `/notifications test` to verify direct-message delivery.'
-                : 'The FVN.li app is not detected as user-installed in this context. Authorize the user install from your FVN.li notification settings, then run `/notifications test`.');
+            const userInstalled =
+                interaction.authorizingIntegrationOwners?.[ApplicationIntegrationType.UserInstall] === interaction.user.id;
+            await interaction.editReply(
+                userInstalled
+                    ? 'The FVN.li app is user-installed for your account. Run `/notifications test` to verify direct-message delivery.'
+                    : 'The FVN.li app is not detected as user-installed in this context. Authorize the user install from your FVN.li notification settings, then run `/notifications test`.',
+            );
             return;
         }
 
         const outcome = await new NotificationService(interaction.client).testDm(interaction.user.id);
+        let recorded = false;
         try {
-            await api.verifyDm(interaction.user.id, outcome.success, outcome.errorCode);
+            const response = await api.verifyDm(interaction.user.id, outcome.success, outcome.errorCode, outcome.retryable);
+            recorded = response.success;
         } catch (error) {
             console.error('[notifications test] Failed to report DM verification:', error);
         }
 
-        await interaction.editReply(outcome.success
-            ? 'Test DM delivered. FVN.li has marked Discord notifications as deliverable.'
-            : `Discord could not deliver the test DM (${outcome.errorCode ?? 'unknown'}). Check the user install, privacy settings, and blocked-app list, then retry.`);
+        let reply: string;
+        if (outcome.success && recorded) {
+            reply = 'Test DM delivered. FVN.li has marked Discord notifications as deliverable.';
+        } else if (outcome.success) {
+            reply = 'Test DM delivered, but FVN.li could not save the result. Check that this Discord account is linked, then retry.';
+        } else if (outcome.retryable) {
+            reply = `The test could not finish (${outcome.errorCode ?? 'temporary error'}). Your notification authorization is unchanged. Please retry later.`;
+        } else {
+            reply = `Discord could not deliver the test DM (${outcome.errorCode ?? 'unknown'}). Check the user install, privacy settings, and blocked-app list, then retry.`;
+        }
+
+        await interaction.editReply(reply);
     },
 };

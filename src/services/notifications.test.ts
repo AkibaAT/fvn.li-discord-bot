@@ -1,15 +1,6 @@
 import {afterEach, expect, test} from 'bun:test';
 import type {Client} from 'discord.js';
 
-process.env['DISCORD_API_KEY'] = 'test-token';
-process.env['DISCORD_ADMIN_ID'] = 'admin-1';
-process.env['DISCORD_ADMIN_NOTIFICATIONS_CHANNEL_ID'] = '';
-process.env['DISCORD_DEV_MODE'] = 'false';
-process.env['DISCORD_DEV_USER_IDS'] = '';
-process.env['DISCORD_DEV_GUILD_IDS'] = '';
-process.env['LARAVEL_API_URL'] = 'https://example.test';
-process.env['LARAVEL_API_TOKEN'] = 'test-api-token';
-
 const {api} = await import('./api.ts');
 const {config} = await import('../config.ts');
 const {NotificationService} = await import('./notifications.ts');
@@ -46,13 +37,15 @@ test('reports dev-mode DM suppression as a retryable non-success', async () => {
     (config.discord as {devMode: boolean}).devMode = true;
     api.getPendingNotifications = async () => ({
         batch_key: 'dm-batch',
-        notifications: [{
-            notification_id: 7,
-            discord_user_id: 'not-allowlisted',
-            type: 'test',
-            game: null,
-            is_digest: false,
-        }],
+        notifications: [
+            {
+                notification_id: 7,
+                discord_user_id: 'not-allowlisted',
+                type: 'test',
+                game: null,
+                is_digest: false,
+            },
+        ],
     });
     let recorded: Parameters<typeof api.recordNotificationStatus>[1] = [];
     api.recordNotificationStatus = async (_batchKey, notifications) => {
@@ -74,25 +67,35 @@ test('acknowledges each admin alert only after that alert is sent', async () => 
         ],
     });
     const acknowledgements: number[][] = [];
-    api.ackAdditionRequests = async (ids) => {
+    const failures: number[] = [];
+    api.ackAdditionRequests = async (ids, failed = []) => {
+        failures.push(...failed.map((failure) => failure.id));
+        if (ids.length === 0) return {success: true};
         acknowledgements.push(ids);
         return {success: true};
     };
     let sends = 0;
     const client = {
-        users: {fetch: async () => ({createDM: async () => ({send: async () => {
-            sends++;
-            if (sends === 2) throw Object.assign(new Error('Discord unavailable'), {status: 503});
-        }})})},
+        users: {
+            fetch: async () => ({
+                createDM: async () => ({
+                    send: async () => {
+                        sends++;
+                        if (sends === 2) throw Object.assign(new Error('Discord unavailable'), {status: 503});
+                    },
+                }),
+            }),
+        },
     } as unknown as Client;
 
     await expect(new NotificationService(client).processAdditionRequestNotifications()).resolves.toBe('error');
     expect(acknowledgements).toEqual([[1]]);
+    expect(failures).toEqual([2]);
 });
 
 test('sends every global update to the configured admin without requiring a channel', async () => {
     const sentMessages: string[] = [];
-    const recordedBatches: Array<{ batchKey: string; success: boolean }> = [];
+    const recordedBatches: Array<{batchKey: string; success: boolean}> = [];
     let requestedAdminId = '';
 
     api.getChannelUpdates = async () => ({
@@ -125,7 +128,7 @@ test('sends every global update to the configured admin without requiring a chan
                 requestedAdminId = userId;
                 return {
                     createDM: async () => ({
-                        send: async ({content}: { content: string }) => {
+                        send: async ({content}: {content: string}) => {
                             sentMessages.push(content);
                         },
                     }),
@@ -147,4 +150,52 @@ test('sends every global update to the configured admin without requiring a chan
     expect(sentMessages[0]).toContain('First VN');
     expect(sentMessages[0]).toContain('Second VN');
     expect(recordedBatches).toEqual([{batchKey: 'updates-1', success: true}]);
+});
+
+test('a failed admin alert does not prevent delivery of later alerts', async () => {
+    let sends = 0;
+    const failures: unknown[] = [];
+    const successes: number[] = [];
+    api.getAdditionRequests = async () => ({
+        admin_panel_url: 'https://example.test/admin',
+        notifications: [1, 2].map((id) => ({
+            id,
+            claim_token: `claim-${id}`,
+            url: 'https://example.test/game',
+            user_count: 1,
+            users: [{name: 'A'}],
+        })),
+    });
+    api.ackAdditionRequests = async (ids, failed = []) => {
+        successes.push(...ids);
+        failures.push(...failed);
+        return {success: true};
+    };
+    const client = {
+        users: {
+            fetch: async () => ({
+                createDM: async () => ({
+                    send: async () => {
+                        if (++sends === 1) throw Object.assign(new Error('Blocked'), {code: 50007});
+                    },
+                }),
+            }),
+        },
+    } as unknown as Client;
+
+    expect(await new NotificationService(client).processAdditionRequestNotifications()).toBe('error');
+    expect(successes).toEqual([2]);
+    expect(failures).toEqual([{id: 1, retryable: false, claim_token: 'claim-1'}]);
+});
+
+test('development mode leaves admin alerts unclaimed when the admin is not allowed', async () => {
+    let claims = 0;
+    (config.discord as {devMode: boolean}).devMode = true;
+    api.getAdditionRequests = async () => {
+        claims++;
+        throw new Error('Must not claim suppressed alerts');
+    };
+
+    expect(await new NotificationService({} as Client).processAdditionRequestNotifications()).toBe('ok');
+    expect(claims).toBe(0);
 });

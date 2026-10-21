@@ -1,36 +1,23 @@
 import type {ChatInputCommandInteraction} from 'discord.js';
 import {SlashCommandBuilder} from 'discord.js';
-import {
-    ApplicationIntegrationType,
-    InteractionContextType,
-} from 'discord-api-types/v10';
+import {ApplicationIntegrationType, InteractionContextType} from 'discord-api-types/v10';
 import {api, extractUrl} from '../services/api.ts';
 import type {Command} from './index.ts';
+import {truncateMessage} from '../services/message-content.ts';
 
 export const searchCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('search')
         .setDescription('Search for visual novels by name')
-        .setContexts(
-            InteractionContextType.Guild,
-            InteractionContextType.BotDM,
-            InteractionContextType.PrivateChannel
-        )
-        .setIntegrationTypes(
-            ApplicationIntegrationType.GuildInstall,
-            ApplicationIntegrationType.UserInstall
-        )
-        .addStringOption((option) =>
-            option
-                .setName('name')
-                .setDescription('Game name to search')
-                .setRequired(true)
-        ),
+        .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
+        .addStringOption((option) => option.setName('name').setDescription('Game name to search').setRequired(true)),
 
     async execute(interaction: ChatInputCommandInteraction) {
         const name = interaction.options.getString('name', true);
 
         await interaction.deferReply();
+        const reply = (content: string) => interaction.editReply({content: truncateMessage(content), allowedMentions: {parse: []}});
 
         const username = interaction.user.username;
         console.log(`[Search] Query: "${name}" (user: ${username})`);
@@ -39,7 +26,7 @@ export const searchCommand: Command = {
             const result = await api.search(name);
 
             if (result.matches === 0) {
-                await interaction.editReply(`Found no matches for "${name}"`);
+                await reply(`Found no matches for "${name}"`);
                 return;
             }
 
@@ -50,16 +37,10 @@ export const searchCommand: Command = {
 
             for (const game of games) {
                 const version = game.version ?? 'unknown';
-                const wordCount = game.english_word_count
-                    ? `, ${game.english_word_count.toLocaleString()} words`
-                    : '';
-                const lastUpdated = game.published_at
-                    ? `, updated <t:${Math.floor(game.published_at)}:R>`
-                    : '';
+                const wordCount = game.english_word_count ? `, ${game.english_word_count.toLocaleString()} words` : '';
+                const lastUpdated = game.published_at ? `, updated <t:${Math.floor(game.published_at)}:R>` : '';
                 const gameUrl = extractUrl(game.url);
-                const primaryUrl = game.primary_url
-                    ? `\n<${game.primary_url}>`
-                    : '';
+                const primaryUrl = game.primary_url ? `\n<${game.primary_url}>` : '';
 
                 if (singleResult) {
                     response += `**${game.name}** (v${version}${wordCount}${lastUpdated})\n${gameUrl}${primaryUrl}\n\n`;
@@ -86,12 +67,10 @@ export const searchCommand: Command = {
             }
 
             console.log(`[Search] Response length: ${response.length} chars`);
-            await interaction.editReply(response);
+            await reply(response);
         } catch (error) {
             console.error(`[Search] API error:`, error);
-            await interaction.editReply(
-                `An unexpected error occurred while searching for "${name}"`
-            );
+            await reply(`An unexpected error occurred while searching for "${name}"`);
         }
     },
 };

@@ -15,6 +15,7 @@ let inFlightPoll: Promise<void> | null = null;
 let shuttingDown = false;
 let consecutiveFailedPasses = 0;
 let serverBotAvailable = false;
+let commandsRegistered = false;
 
 registerEvents(client);
 client.on(Events.Error, (error) => console.error('Discord client error:', error));
@@ -42,20 +43,8 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
 async function main(): Promise<void> {
-    client.once(Events.ClientReady, async (readyClient) => {
+    client.once(Events.ClientReady, () => {
         console.log('Discord connection established');
-        try {
-            await reconcileCurrentGuilds(readyClient);
-            registerGuildEvents(readyClient);
-            serverBotAvailable = true;
-        } catch (error) {
-            if (error instanceof ApiRequestError && error.status === 404) {
-                console.log('[Ready] Discord server management is disabled; continuing with DM features');
-            } else {
-                console.warn('[Ready] Discord server management is unavailable; continuing with DM features:', error);
-            }
-        }
-        await registerCommands(readyClient);
         schedulePoll(0);
     });
 
@@ -65,15 +54,36 @@ async function main(): Promise<void> {
 function schedulePoll(delay: number): void {
     if (shuttingDown) return;
     pollTimer = setTimeout(() => {
-        inFlightPoll = runPoll().finally(() => {
-            inFlightPoll = null;
-            schedulePoll(config.polling.intervalMs);
-        });
+        inFlightPoll = runPoll()
+            .catch((error) => console.error('[poll] Unexpected failure:', error))
+            .finally(() => {
+                inFlightPoll = null;
+                schedulePoll(config.polling.intervalMs);
+            });
     }, delay);
 }
 
 async function runPoll(): Promise<void> {
     const passes: Record<string, string> = {};
+    if (!commandsRegistered) {
+        try {
+            await registerCommands(client);
+            commandsRegistered = true;
+        } catch (error) {
+            passes.commands = 'error';
+            console.error('[poll] Command registration failed; will retry:', error);
+        }
+    }
+    if (!serverBotAvailable) {
+        try {
+            await reconcileCurrentGuilds(client as Client<true>);
+            registerGuildEvents(client);
+            serverBotAvailable = true;
+        } catch (error) {
+            passes.server_setup = error instanceof ApiRequestError && error.status === 404 ? 'disabled' : 'error';
+            if (passes.server_setup === 'error') console.error('[poll] Server reconciliation failed; will retry:', error);
+        }
+    }
     passes.channel_updates = await notificationService.processUpdates();
     passes.user_notifications = await notificationService.processUserNotifications();
     passes.addition_requests = await notificationService.processAdditionRequestNotifications();

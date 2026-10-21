@@ -2,9 +2,7 @@
 
 ## What does it do?
 
-This project serves as a Discord bot interface for visual novel metadata that is indexed and stored by a separate Laravel application. The bot provides notifications about visual novel updates to Discord users.
-
-The project works in conjunction with [FVN.li](https://github.com/AkibaAT/fvn.li), a Laravel application that handles the actual indexing, metadata processing, and database management.
+The Discord bot for [FVN.li](https://github.com/AkibaAT/fvn.li). It searches the visual novel catalog and sends game update notifications.
 
 ### Current Functionality:
 
@@ -12,22 +10,13 @@ The project works in conjunction with [FVN.li](https://github.com/AkibaAT/fvn.li
 
 The bot periodically polls the API for updates and notifies subscribed users.
 
-## How Do I Run It?
-
-### Option 1: Docker (Recommended)
+## Running
 
 ```bash
 docker compose up -d
 ```
 
-### Option 2: Self-managed
-
-#### Prerequisites:
-* Bun 1.0 or later
-* Discord bot application with Message Content Intent enabled
-* Access to the [FVN.li](https://github.com/AkibaAT/fvn.li) API
-
-#### Environment Variables:
+## Configuration
 The following environment variables must be set before starting the application:
 
 **FVN.li API Configuration:**
@@ -44,20 +33,9 @@ The following environment variables must be set before starting the application:
 * `DISCORD_DEV_USER_IDS` - Comma-separated Discord user IDs allowed to receive DMs in development mode
 * `DISCORD_DEV_GUILD_IDS` - Comma-separated Discord guild IDs allowed to receive channel messages in development mode
 
-In development mode, queued notifications for users outside the allowlist are reported to the API as successfully processed without contacting Discord. Addition-request and review-report notifications are likewise consumed without delivery when the configured admin is not allowlisted. Production delivery behavior is unchanged when `DISCORD_DEV_MODE` is unset or false.
+In development mode, only listed users and guilds receive messages, including `/notifications test`. An empty list allows no deliveries. Suppressed DMs can be retried; admin alerts stay queued until the admin is allowed.
 
-#### Installation and Setup:
-```bash
-# Clone the repository
-git clone https://github.com/AkibaAT/fvn.li-discord-bot.git
-cd fvn.li-discord-bot
-
-# Install dependencies
-bun install
-
-# Start the Discord bot
-bun run src/index.ts
-```
+The API handles retries. For server messages, a failed delivery confirmation does not trigger another send. Restarting the bot can still cause duplicates.
 
 ## Project Structure
 
