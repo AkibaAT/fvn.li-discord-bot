@@ -19,10 +19,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build patched test image
+      - name: Build test image
         run: docker build --pull --target builder -t fvnli-bot-test .
 
-      - name: Audit dependencies and test the patched runtime
+      - name: Audit dependencies and test the Bun runtime
         run: docker run --rm --entrypoint sh fvnli-bot-test -c 'bun audit && bun run typecheck && bun test'
 
   build:
